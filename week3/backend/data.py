@@ -13,9 +13,9 @@ import requests
 from functools import lru_cache
 
 _ROOT = Path(__file__).parent.parent.parent
-DATA_PATH = _ROOT / "week2" / "data" / "processed" / "demand_enriched.parquet"
+DATA_PATH = _ROOT / "week2" / "data" / "demand_enriched.parquet"
 LOOKUP_PATH = _ROOT / "week2" / "metadata" / "Lookups" / "taxi_zone_lookup.csv"
-MODEL_PATH = _ROOT / "week2" / "data" / "processed" / "lgbm_demand_model.txt"
+MODEL_PATH = _ROOT / "week2" / "model" / "lgbm_demand_model.txt"
 
 # Fixed reference point: end of 2nd week in Feb 2026 (the latest complete month)
 # Data before this date is actual; from this point forward uses model predictions
