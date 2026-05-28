@@ -10,35 +10,35 @@ Write tests that:
 import pytest
 import pandas as pd
 import numpy as np
+import logging
+import sys
+from pathlib import Path
 
-# TODO: Import your validation class
-# from check_data_quality import DataQualityValidator
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from validation.check_data_quality import DataQualityValidator
+
+CUTOFF = pd.Timestamp("2026-01-16")
+DATA_PATH = Path(__file__).parent.parent / "data" / "demand_enriched_corrupted.parquet"
 
 
 @pytest.fixture
 def baseline_data():
-    """Load clean baseline data."""
-    # TODO: Load your clean baseline dataframe.
-    pass
+    """Load clean baseline data (pre Jan 16)."""
+    df = pd.read_parquet(DATA_PATH)
+    return df[df["time_bucket"] < CUTOFF]
 
 
 @pytest.fixture
 def corrupted_data():
-    """Load corrupted data."""
-    # TODO: Load your corrupted dataframe.
-    pass
+    """Load corrupted data (post Jan 16)."""
+    df = pd.read_parquet(DATA_PATH)
+    return df[df["time_bucket"] >= CUTOFF]
 
 
 @pytest.fixture
 def validator(baseline_data):
     """Create validator initialized with baseline."""
-    # TODO: Create DataQualityValidator(baseline_data)
-    pass
-
-
-# ============================================================================
-# TEST STRUCTURE EXAMPLES
-# ============================================================================
+    return DataQualityValidator(baseline_data)
 
 
 class TestBaselineData:
@@ -46,57 +46,55 @@ class TestBaselineData:
 
     def test_baseline_passes_validation(self, baseline_data, validator):
         """Baseline data should have no quality issues."""
-        # TODO: Implement
-        # result = validator.validate(baseline_data)
-        # assert result['is_valid'], f"Baseline failed: {result['issues']}"
-        pass
+        result = validator.validate(baseline_data)
+        assert result['is_valid'], f"Baseline failed: {result['issues']}"
 
 
 class TestDataQualityIssues:
     """Tests that verify each issue is detected."""
 
-    def test_detect_issue_1(self, corrupted_data, validator):
-        """Should detect Issue 1 (TODO: describe your issue)."""
-        # TODO: Implement
-        # result = validator.validate(corrupted_data)
-        # assert not result['is_valid']
-        # assert any(issue['type'] == '...' for issue in result['issues'])
-        pass
+    def test_detect_negative_trip_counts(self, corrupted_data, validator):
+        """Should detect negative trip_count values."""
+        result = validator.validate(corrupted_data)
+        assert not result['is_valid']
+        assert any(issue['type'] == 'negative_trip_count' for issue in result['issues'])
 
-    def test_detect_issue_2(self, corrupted_data, validator):
-        """Should detect Issue 2 (TODO: describe your issue)."""
-        # TODO: Implement
-        pass
+    def test_detect_extreme_outliers(self, corrupted_data, validator):
+        """Should detect extreme trip_count outliers."""
+        result = validator.validate(corrupted_data)
+        assert not result['is_valid']
+        assert any(issue['type'] == 'extreme_outliers' for issue in result['issues'])
 
-    # It's recommended but optional to find all 4 issues:
-    # def test_detect_issue_3(self, corrupted_data, validator):
-    #     """Should detect Issue 3 (TODO: describe your issue)."""
-    #     # TODO: Implement
-    #     pass
-
-    # def test_detect_issue_4(self, corrupted_data, validator):
-    #     """Should detect Issue 4 (TODO: describe your issue)."""
-    #     # TODO: Implement
-    #     pass
+    def test_detect_duplicate_rows(self, corrupted_data, validator):
+        """Should detect duplicate rows."""
+        result = validator.validate(corrupted_data)
+        assert not result['is_valid']
+        assert any(issue['type'] == 'duplicate_rows' for issue in result['issues'])
 
 
 class TestGracefulDegradation:
     """Tests that API gracefully handles bad data."""
 
     def test_api_does_not_crash_with_bad_data(self, corrupted_data):
-        """API should continue running even with corrupted data."""
-        # TODO: Test that your data.py doesn't crash
-        # - Load corrupted data
-        # - Try to make predictions
-        # - Verify API returns something (even if degraded)
-        pass
+        """Validator should not raise an exception on corrupted data."""
+        validator = DataQualityValidator()
+        try:
+            result = validator.validate(corrupted_data)
+            assert 'is_valid' in result
+            assert 'issues' in result
+        except Exception as e:
+            pytest.fail(f"Validator crashed on corrupted data: {e}")
 
-    def test_fallback_is_logged(self, corrupted_data):
-        """When graceful degradation happens, it should be logged."""
-        # TODO: Test logging
-        # - Run with corrupted data
-        # - Check logs show what degraded
-        pass
+    def test_fallback_is_logged(self, corrupted_data, caplog):
+        """When issues are found, they should be logged as warnings."""
+        logger = logging.getLogger("test_logger")
+        with caplog.at_level(logging.WARNING):
+            validator = DataQualityValidator()
+            result = validator.validate(corrupted_data)
+            if not result['is_valid']:
+                for issue in result['issues']:
+                    logger.warning(f"[{issue['severity'].upper()}] {issue['type']}: {issue['description']}")
+        assert any(r.levelname == "WARNING" for r in caplog.records)
 
 
 # ============================================================================

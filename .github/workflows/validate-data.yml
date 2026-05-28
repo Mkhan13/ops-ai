@@ -2,7 +2,7 @@ name: Data Quality Check
 
 on:
   schedule:
-    - cron: '0 * * * *'  # TODO: Choose your frequency (15min? hourly? daily?)
+    - cron: '0 * * * *'  # Every hour
   push:
     branches: [main]
     paths:
@@ -29,12 +29,31 @@ jobs:
         id: validate
         run: |
           cd week3
-          # TODO: Implement this
-          # - Load and split the corrupted parquet (pre/post Jan 16)
-          # - Run your validation checks
-          # - Report findings
-          # - Exit with error if validation fails
-          python3 -m validation.check_data_quality
+          python3 -c "
+          import sys
+          import pandas as pd
+          from validation.check_data_quality import DataQualityValidator
+
+          CUTOFF = pd.Timestamp('2026-01-16')
+          df = pd.read_parquet('data/demand_enriched_corrupted.parquet')
+          baseline = df[df['time_bucket'] < CUTOFF]
+          corrupted = df[df['time_bucket'] >= CUTOFF]
+
+          print(f'Baseline rows: {len(baseline)}, Corrupted rows: {len(corrupted)}')
+
+          validator = DataQualityValidator(baseline_df=baseline)
+          result = validator.validate(corrupted)
+
+          print(f'Issues found: {result[\"num_issues\"]}')
+          for issue in result['issues']:
+              print(f'  [{issue[\"severity\"].upper()}] {issue[\"type\"]}: {issue[\"description\"]}')
+
+          if not result['is_valid']:
+              print('Data validation FAILED — blocking deployment')
+              sys.exit(1)
+          else:
+              print('Data validation PASSED')
+          "
 
       - name: Block deployment if validation fails
         if: failure()
