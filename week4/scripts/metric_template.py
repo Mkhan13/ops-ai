@@ -177,3 +177,4 @@ class MetricComputer:
             results['accuracy'] = self.metric_1_accuracy(new_df, predictions, actuals)
             results['accuracy_by_zone'] = self.metric_2_accuracy_by_zone(new_df, predictions, actuals)
         return results
+ 
