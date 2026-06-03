@@ -13,6 +13,9 @@ on:
 jobs:
   monitor:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
     steps:
       - uses: actions/checkout@v3
         with:
@@ -27,16 +30,16 @@ jobs:
         run: |
           pip install pandas pyarrow numpy scipy
 
-      - name: Compute monitoring metrics
-        id: metrics
-        run: |
-          cd week4
-          # TODO: Implement metric computation
-          # - Load baseline and current data
-          # - Compute 8+ metrics (nulls, distributions, PSI, KS test, etc.)
-          # - Report metrics and thresholds
-          # - Determine if any alerts should fire
-          python3 scripts/compute_metrics.py
+      # - name: Compute monitoring metrics
+      #   id: metrics
+      #   run: |
+      #     cd week4
+      #     # TODO: Implement metric computation
+      #     # - Load baseline and current data
+      #     # - Compute 8+ metrics (nulls, distributions, PSI, KS test, etc.)
+      #     # - Report metrics and thresholds
+      #     # - Determine if any alerts should fire
+      #     python3 scripts/compute_metrics.py
 
       - name: Detect drift patterns
         id: drift
