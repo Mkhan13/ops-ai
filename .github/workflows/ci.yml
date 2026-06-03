@@ -31,7 +31,7 @@ jobs:
     - name: Install dependencies
       run: |
         pip install --upgrade pip
-        pip install -r backend/requirements.txt
+        pip install -r week2/backend/requirements.txt
         pip install pytest
 
     - name: Run tests
@@ -57,6 +57,6 @@ jobs:
       uses: docker/build-push-action@v4
       with:
         context: .
-        file: ./starter/Dockerfile
+        file: ./week2/starter/Dockerfile
         push: false
         tags: demand-api:latest
