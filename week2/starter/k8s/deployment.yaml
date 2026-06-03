@@ -37,10 +37,11 @@ spec:
           - |
             # Authenticate using service account key
             gcloud auth activate-service-account --key-file=/var/secrets/gcs/key.json
-            gsutil cp gs://${GCS_BUCKET}/demand_enriched.parquet /data/processed/
-            gsutil cp gs://${GCS_BUCKET}/lgbm_demand_model.txt /data/processed/
-            gsutil cp gs://${GCS_BUCKET}/zone_hour_avg_fare.parquet /data/processed/
-            gsutil cp gs://${GCS_BUCKET}/taxi_zones.geojson /data/processed/
+            mkdir -p /data/processed
+            gsutil cp gs://${GCS_BUCKET}/demand_enriched.parquet /data/demand_enriched.parquet
+            gsutil cp gs://${GCS_BUCKET}/lgbm_demand_model.txt /model/lgbm_demand_model.txt
+            gsutil cp gs://${GCS_BUCKET}/zone_hour_avg_fare.parquet /data/processed/zone_hour_avg_fare.parquet
+            gsutil cp gs://${GCS_BUCKET}/taxi_zones.geojson /data/taxi_zones.geojson
         env:
         - name: GCS_BUCKET
           valueFrom:
@@ -49,7 +50,9 @@ spec:
               key: GCS_BUCKET
         volumeMounts:
         - name: data
-          mountPath: /data/processed
+          mountPath: /data
+        - name: model
+          mountPath: /model
         - name: gcs-sa-key
           mountPath: /var/secrets/gcs
           readOnly: true
@@ -90,11 +93,15 @@ spec:
 
         volumeMounts:
         - name: data
-          mountPath: /data/processed
+          mountPath: /data
+        - name: model
+          mountPath: /model
 
       # Shared volume for init container + main container
       volumes:
       - name: data
+        emptyDir: {}
+      - name: model
         emptyDir: {}
       - name: gcs-sa-key
         secret:
