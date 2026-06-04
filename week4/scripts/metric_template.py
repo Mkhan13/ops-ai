@@ -123,7 +123,7 @@ class MetricComputer:
         Return dict with age in minutes, hours.
         """
         time_col = None
-        for col in ['tpep_pickup_datetime', 'pickup_datetime', 'datetime', 'timestamp']:
+        for col in ['time_bucket', 'tpep_pickup_datetime', 'pickup_datetime', 'datetime', 'timestamp']:
             if col in new_df.columns:
                 time_col = col
                 break
