@@ -113,6 +113,7 @@ def main():
     # Load baseline and new data
     baseline_df = pd.read_parquet("data/demand_enriched_baseline.parquet")
     new_df = pd.read_parquet("data/demand_enriched_week4.parquet")
+    new_df = new_df[new_df['time_bucket'] >= '2026-02-02'] # Filter to the last week of data
 
     # Run feature-level drift detection
     features_to_check = ['trip_count', 'hour', 'dayofweek', 'lag_1h']
