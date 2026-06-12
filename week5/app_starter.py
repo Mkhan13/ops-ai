@@ -13,6 +13,7 @@ import json
 import sqlite3
 from typing import Dict, Any
 import google.genai as genai
+from google.genai import types
 import logging
 import os
 from dotenv import load_dotenv
@@ -74,8 +75,40 @@ class EmployeeLookupTool(Tool):
             JSON string with employee info or error message
         """
         try:
-            # TODO: implement
-            return "TODO: implement employee lookup"
+            connection = sqlite3.connect(self.db_path)
+            database_cursor = connection.cursor()
+
+            if employee_id:
+                database_cursor.execute("SELECT * FROM employees WHERE id = ?", (employee_id,))
+
+            elif employee_name:
+                database_cursor.execute(
+                    "SELECT * FROM employees WHERE name LIKE ?",
+                    (f"%{employee_name}%",)
+                )
+            else:
+                return "Employee not found"
+
+            all_rows = database_cursor.fetchall()
+
+            column_names = []
+            for column_info in database_cursor.description:
+                column_names.append(column_info[0])
+
+            connection.close()
+
+            if not all_rows:
+                return "Employee not found"
+
+            results = []
+            for single_row in all_rows:
+                row_as_dict = {}
+                for index in range(len(column_names)):
+                    row_as_dict[column_names[index]] = single_row[index]
+                results.append(row_as_dict)
+
+            return json.dumps(results, indent=2)
+
         except Exception as e:
             logger.error(f"Employee lookup error: {e}")
             return f"Error: {str(e)}"
@@ -89,8 +122,9 @@ class PolicySearchTool(Tool):
 
     def __init__(self):
         super().__init__("policy_search", "Search policy documents by keyword or topic")
-        # TODO: Load data/documents.json
         self.documents = []
+        with open("data/documents.json") as documents_file:
+            self.documents = json.load(documents_file)
 
     def execute(self, query: str, limit: int = 5) -> str:
         """Search policies by keyword.
@@ -109,8 +143,24 @@ class PolicySearchTool(Tool):
             Formatted string with matching documents
         """
         try:
-            # TODO: implement
-            return "TODO: implement policy search"
+            matching_documents = []
+            for document in self.documents:
+                if query.lower() in document["content"].lower():
+                    matching_documents.append(document)
+
+            top_documents = matching_documents[:limit]
+
+            if not top_documents:
+                return f"No documents found matching: {query}"
+
+            result_text = ""
+            for document in top_documents:
+                document_title = document["title"]
+                document_snippet = document["content"][:500]
+                result_text += f"Title: {document_title}\nSnippet: {document_snippet}"
+
+            return result_text.strip()
+
         except Exception as e:
             logger.error(f"Policy search error: {e}")
             return f"Error: {str(e)}"
@@ -124,8 +174,9 @@ class ExpenseQueryTool(Tool):
 
     def __init__(self):
         super().__init__("expense_query", "Query expense approval limits by role")
-        # TODO: load data/policies.json into the documents attribute
         self.policies = {}
+        with open("data/policies.json") as policies_file:
+            self.policies = json.load(policies_file)
 
     def execute(self, role: str) -> str:
         """Query expense approval limit for a given role.
@@ -142,8 +193,14 @@ class ExpenseQueryTool(Tool):
             String with approval limit for the given role
         """
         try:
-            # TODO: implement
-            return "TODO: implement expense query"
+            approval_limits = self.policies["expense"]["approval_limits"]
+
+            if role not in approval_limits:
+                return f"Role not found: {role}"
+
+            approval_amount = approval_limits[role]
+            return f"Approval limit for {role}: ${approval_amount}"
+
         except Exception as e:
             logger.error(f"Expense query error: {e}")
             return f"Error: {str(e)}"
@@ -170,28 +227,19 @@ class Agent:
             api_key: Google AI API key (or use GOOGLE_API_KEY env var)
         """
         self.db_path = db_path
-        self.api_key = api_key or GOOGLE_API_KEY
+        self.api_key = GOOGLE_API_KEY
 
-        if not self.api_key:
-            raise ValueError(
-                "GOOGLE_API_KEY not set. Get free key at: "
-                "https://aistudio.google.com/app/apikey"
-            )
+        self.client = genai.Client(api_key=self.api_key)
 
-        # TODO: Initialize Google GenAI client
-        # self.client = genai.Client(api_key=self.api_key)
+        self.tools = {
+            "employee_lookup": EmployeeLookupTool(db_path),
+            "policy_search": PolicySearchTool(),
+            "expense_query": ExpenseQueryTool(),
+        }
 
-        # TODO: Initialize tools dictionary
-        # self.tools = {
-        #     "employee_lookup": EmployeeLookupTool(db_path),
-        #     "policy_search": PolicySearchTool(),
-        #     "expense_query": ExpenseQueryTool(),
-        # }
-
-        # TODO: Initialize metrics
-        # self.token_count = 0
-        # self.total_cost = 0.0
-        # self.queries_run = 0
+        self.token_count = 0
+        self.total_cost = 0.0
+        self.queries_run = 0
 
     def _build_system_prompt(self, user_role: str) -> str:
         """Build system prompt describing available tools.
@@ -205,8 +253,21 @@ class Agent:
         Returns:
             System prompt string
         """
-        # TODO: implement
-        return "TODO: implement system prompt"
+        system_prompt = f"""You help TechCorp employees get answers about company policies and staff.
+        The user's role is: {user_role}
+
+        Tools you can use:
+        - employee_lookup: Find employee information. Args: employee_name=<name> OR employee_id=<id>
+        - policy_search: Search policy documents by keyword. Args: query=<search term>
+        - expense_query: Get expense approval limit for a role. Args: role=<ic1_ic2|ic3|manager|director|vp>
+
+        When a tool is needed, reply in this exact format:
+        TOOL: <tool_name>
+        ARGS: <argument_name>=<value>
+
+        If no tool is needed, answer directly and concisely."""
+
+        return system_prompt
 
     def query(self, user_query: str, user_role: str = "engineer") -> Dict[str, Any]:
         """Answer a question using LLM + tools.
@@ -248,12 +309,72 @@ class Agent:
         """
         logger.info(f"Processing query: {user_query}")
 
-        # TODO: implement agent query logic
+        system_prompt = self._build_system_prompt(user_role)
+
+        first_response = self.client.models.generate_content( # Get initial response from Gemini
+            model="gemini-2.5-flash",
+            contents=user_query,
+            config=types.GenerateContentConfig(
+                system_instruction=system_prompt
+            )
+        )
+
+        first_response_text = first_response.text
+        input_tokens = first_response.usage_metadata.prompt_token_count
+        output_tokens = first_response.usage_metadata.candidates_token_count
+
+        tool_name = None
+        tool_args = {}
+
+        for line in first_response_text.split("\n"):
+            cleaned_line = line.strip()
+
+            if cleaned_line.startswith("TOOL:"): # Get tool name
+                tool_name = cleaned_line.replace("TOOL:", "").strip()
+
+            elif cleaned_line.startswith("ARGS:"): # Get arguments for the tool
+                args_string = cleaned_line.replace("ARGS:", "").strip()
+                for arg_pair in args_string.split(","):
+                    if "=" in arg_pair:
+                        arg_name = arg_pair.split("=")[0].strip()
+                        arg_value = arg_pair.split("=")[1].strip()
+                        tool_args[arg_name] = arg_value
+
+        if tool_name and tool_name in self.tools: # Execute the tool
+            tool_result = self.tools[tool_name].execute(**tool_args)
+
+            # Use tool result to get final answer from Gemini
+            follow_up_message = (
+                f"Tool result:\n{tool_result} "
+                f"Answer the user's question using this information: {user_query}"
+            )
+
+            second_response = self.client.models.generate_content(
+                model="gemini-2.5-flash", # using flash instead of pro for cost
+                contents=follow_up_message,
+                config=types.GenerateContentConfig(
+                    system_instruction=system_prompt
+                )
+            )
+
+            final_answer = second_response.text
+            input_tokens += second_response.usage_metadata.prompt_token_count
+            output_tokens += second_response.usage_metadata.candidates_token_count
+
+        else:
+            final_answer = first_response_text
+
+        total_tokens = input_tokens + output_tokens # Calculate total tokens used
+        query_cost = self._estimate_query_cost(input_tokens, output_tokens) # Calculate cost
+
+        self.token_count += total_tokens
+        self.total_cost += query_cost
+        self.queries_run += 1
 
         return {
-            "answer": "TODO: implement agent query logic",
-            "tokens_used": 0,
-            "cost": 0.0,
+            "answer": final_answer,
+            "tokens_used": total_tokens,
+            "cost": query_cost,
             "role": user_role,
         }
 
@@ -277,12 +398,16 @@ class Agent:
         - total_cost: cumulative cost in dollars
         - avg_cost_per_query: average cost per query
         """
-        # TODO: implement
+        if self.queries_run == 0:
+            average_cost = 0.0
+        else:
+            average_cost = self.total_cost / self.queries_run
+
         return {
-            "total_queries": 0,
-            "total_tokens": 0,
-            "total_cost": 0.0,
-            "avg_cost_per_query": 0.0,
+            "total_queries": self.queries_run,
+            "total_tokens": self.token_count,
+            "total_cost": self.total_cost,
+            "avg_cost_per_query": average_cost,
         }
 
 
@@ -291,22 +416,37 @@ class Agent:
 if __name__ == "__main__":
     """Quick test of agent functionality."""
     import sys
+    import time
+
+    test_queries = [
+        "Find employee Sarah Villegas",
+        "Look up the employee with ID 3",
+        "Find employee Austin Gentry",
+        "What is the remote work policy?",
+        "What are the hotel rate limits for travel?",
+        "How many PTO days do managers get?",
+        "What is the expense limit for ic3?",
+        "What can a vp approve for expenses?",
+        "What does IC stand for in job levels?",
+        "What is TechCorp's core mission?",
+    ]
 
     try:
-        # Initialize agent
         agent = Agent("data/techcorp.db")
-        print("Agent initialized successfully")
 
-        # Test a query
-        print("\nTesting query: 'What is the travel policy?'")
-        result = agent.query("What is the travel policy?")
-        print(f"Answer: {result['answer']}")
-        print(f"Tokens: {result['tokens_used']}")
-        print(f"Cost: ${result['cost']:.6f}")
+        for test_query in test_queries:
+            print(f"Query: {test_query}")
+            result = agent.query(test_query)
+            print(f"Answer: {result['answer']}")
+            print(f"Tokens: {result['tokens_used']}")
+            print(f"Cost: ${result['cost']:.6f}")
+            time.sleep(60)
 
-        # Check metrics
         metrics = agent.get_metrics()
-        print(f"\nMetrics: {metrics}")
+        print(f"Total queries: {metrics['total_queries']}")
+        print(f"Total tokens: {metrics['total_tokens']}")
+        print(f"Total cost: ${metrics['total_cost']:.6f}")
+        print(f"Avg cost per query: ${metrics['avg_cost_per_query']:.6f}")
 
     except Exception as e:
         print(f"Error: {e}")
