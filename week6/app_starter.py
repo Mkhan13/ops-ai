@@ -17,6 +17,7 @@ from google.genai import types
 import logging
 import os
 from dotenv import load_dotenv
+from access_control_starter import AccessController, RateLimiter, CostEnforcer
 
 load_dotenv()
 
@@ -241,6 +242,10 @@ class Agent:
         self.total_cost = 0.0
         self.queries_run = 0
 
+        self.access_controller = AccessController("data/access_control.json")
+        self.rate_limiter = RateLimiter(max_queries_per_minute=30)
+        self.cost_enforcer = CostEnforcer()
+
     def _build_system_prompt(self, user_role: str) -> str:
         """Build system prompt describing available tools.
 
@@ -269,7 +274,7 @@ class Agent:
 
         return system_prompt
 
-    def query(self, user_query: str, user_role: str = "engineer") -> Dict[str, Any]:
+    def query(self, user_query: str, user_id: str, user_role: str = "engineer") -> Dict[str, Any]:
         """Answer a question using LLM + tools.
 
         TODO: Implement the reasoning loop:
@@ -308,6 +313,12 @@ class Agent:
             - "role": str - user role
         """
         logger.info(f"Processing query: {user_query}")
+
+        if not self.rate_limiter.is_allowed(user_id):
+            return {"error": "Rate limit exceeded"}
+
+        if not self.cost_enforcer.can_afford_query(user_id, estimated_cost=0.01):
+            return {"error": "Budget exceeded"}
 
         system_prompt = self._build_system_prompt(user_role)
 
@@ -371,6 +382,9 @@ class Agent:
         self.total_cost += query_cost
         self.queries_run += 1
 
+        self.cost_enforcer.add_cost(user_id, user_role, query_cost)
+        final_answer = self.access_controller.redact_response(user_role, final_answer)
+
         return {
             "answer": final_answer,
             "tokens_used": total_tokens,
@@ -416,31 +430,47 @@ class Agent:
 if __name__ == "__main__":
     """Quick test of agent functionality."""
     import sys
-    import time
-
-    test_queries = [
-        "Find employee Sarah Villegas",
-        "Look up the employee with ID 3",
-        "Find employee Austin Gentry",
-        "What is the remote work policy?",
-        "What are the hotel rate limits for travel?",
-        "How many PTO days do managers get?",
-        "What is the expense limit for ic3?",
-        "What can a vp approve for expenses?",
-        "What does IC stand for in job levels?",
-        "What is TechCorp's core mission?",
-    ]
 
     try:
         agent = Agent("data/techcorp.db")
 
-        for test_query in test_queries:
-            print(f"Query: {test_query}")
-            result = agent.query(test_query)
-            print(f"Answer: {result['answer']}")
-            print(f"Tokens: {result['tokens_used']}")
-            print(f"Cost: ${result['cost']:.6f}")
-            time.sleep(60)
+        print("Query: What is the remote work policy?")
+        result = agent.query("What is the remote work policy?", user_id="user2", user_role="hr") # Allowed
+        print(f"Answer: {result['answer']}")
+
+        print("Query: What is TechCorp's code of conduct?")
+        result = agent.query("What is TechCorp's code of conduct?", user_id="user2", user_role="hr") # Allowed
+        print(f"Answer: {result['answer']}")
+
+        print("Query: What is TechCorp's equal opportunity employment policy?")
+        result = agent.query("What is TechCorp's equal opportunity employment policy?", user_id="user2", user_role="hr") # Allowed
+        print(f"Answer: {result['answer']}")
+
+        budget_agent = Agent("data/techcorp.db")
+        budget_agent.cost_enforcer.add_cost("user3", "engineer", 100.0)
+        print("Query: What is the travel policy?")
+        result = budget_agent.query("What is the travel policy?", user_id="user3", user_role="engineer") # Denied
+        print(f"Error: {result['error']}")
+
+        print("Query: What is the expense limit for a director?")
+        result = budget_agent.query("What is the expense limit for a director?", user_id="user3", user_role="engineer") # Denied
+        print(f"Error: {result['error']}")
+
+        print("Query: What is the IC3 expense approval limit?")
+        result = budget_agent.query("What is the IC3 expense approval limit?", user_id="user3", user_role="engineer") # Denied
+        print(f"Error: {result['error']}")
+
+        print("Query: What is Austin Gentry's salary?")
+        result = agent.query("What is Austin Gentry's salary?", user_id="user1", user_role="engineer") # Redacted
+        print(f"Answer: {result['answer']}")
+
+        print("Query: What is Sarah Villegas's salary?")
+        result = agent.query("What is Sarah Villegas's salary?", user_id="user1", user_role="engineer") # Redacted
+        print(f"Answer: {result['answer']}")
+
+        print("Query: What is Brian Yang's salary?")
+        result = agent.query("What is Brian Yang's salary?", user_id="user1", user_role="engineer") # Redacted
+        print(f"Answer: {result['answer']}")
 
         metrics = agent.get_metrics()
         print(f"Total queries: {metrics['total_queries']}")

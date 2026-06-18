@@ -10,7 +10,7 @@ Implement three guardrails:
 import json
 import logging
 from typing import Dict, Any, List
-from datetime import datetime
+from datetime import datetime, timezone
 from time import time
 
 logging.basicConfig(level=logging.INFO)
@@ -33,9 +33,10 @@ class AccessController:
         2. Store in self.policy
         3. Initialize audit_log list for tracking access attempts
         """
-        # TODO: implement
         self.policy = {}
         self.audit_log = []
+        with open(access_policy_path) as policy_file:
+            self.policy = json.load(policy_file)
 
     def can_view_document(self, role: str, document: Dict[str, Any]) -> bool:
         """Check if role can view document based on sensitivity level.
@@ -50,8 +51,13 @@ class AccessController:
           * confidential → manager, hr, finance, executive
           * restricted → hr, executive only
         """
-        # TODO: implement
-        return False
+        sensitivity_level = document.get("sensitivity", "Restricted")
+        allowed_roles = self.policy["document_access"].get(sensitivity_level, [])
+
+        if role in allowed_roles:
+            return True
+        else:
+            return False
 
     def can_view_field(self, role: str, field_name: str) -> bool:
         """Check if role can view a sensitive field.
@@ -61,8 +67,17 @@ class AccessController:
         - Check if role is in visibility list
         - Example: salary field visible to ["manager", "hr"] only
         """
-        # TODO: implement
-        return False
+        sensitive_fields = self.policy["sensitive_fields"]
+
+        if field_name not in sensitive_fields:
+            return True
+
+        allowed_roles = sensitive_fields[field_name]["visibility"]
+
+        if role in allowed_roles:
+            return True
+        else:
+            return False
 
     def redact_response(self, role: str, response: str) -> str:
         """Redact sensitive fields from response.
@@ -73,7 +88,17 @@ class AccessController:
         3. Replace values with "[REDACTED]"
         4. Return modified response
         """
-        # TODO: implement
+        import re
+
+        sensitive_fields = self.policy["sensitive_fields"]
+
+        for field_name in sensitive_fields:
+            if not self.can_view_field(role, field_name):
+                pattern = re.compile(
+                    r'(?i)' + re.escape(field_name) + r'\s*[:\-is]+\s*\S+',
+                )
+                response = pattern.sub(field_name + ": [REDACTED]", response)
+
         return response
 
     def log_access(self, role: str, resource: str, allowed: bool, field: str = None):
@@ -86,8 +111,14 @@ class AccessController:
         - field (if applicable)
         - allowed (True/False)
         """
-        # TODO: implement
-        pass
+        log_entry = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "role": role,
+            "resource": resource,
+            "field": field,
+            "allowed": allowed,
+        }
+        self.audit_log.append(log_entry)
 
     def filter_documents(
         self, role: str, documents: List[Dict[str, Any]]
@@ -99,7 +130,13 @@ class AccessController:
         2. Log the access attempt
         3. Keep only documents role can view
         """
-        # TODO: implement
+        for document in documents[:]:
+            allowed = self.can_view_document(role, document)
+            self.log_access(role, document.get("id", "unknown"), allowed)
+
+            if not allowed:
+                documents.remove(document)
+
         return documents
 
     def get_audit_log(self) -> List[Dict[str, Any]]:
@@ -135,8 +172,22 @@ class RateLimiter:
 
         Return: True if allowed, False if rate limit exceeded
         """
-        # TODO: implement
-        return True
+        current_time = time()
+
+        if user_id not in self.user_query_times:
+            self.user_query_times[user_id] = []
+
+        recent_queries = [
+            timestamp for timestamp in self.user_query_times[user_id]
+            if current_time - timestamp < 60
+        ]
+        self.user_query_times[user_id] = recent_queries
+
+        if len(recent_queries) < self.max_queries_per_minute:
+            self.user_query_times[user_id].append(current_time)
+            return True
+        else:
+            return False
 
     def get_remaining_queries(self, user_id: str) -> int:
         """Get remaining queries for user in current minute.
@@ -145,8 +196,22 @@ class RateLimiter:
         1. Get queries in last 60 seconds
         2. Return (max - count) or 0 if negative
         """
-        # TODO: implement
-        return self.max_queries_per_minute
+        current_time = time()
+
+        if user_id not in self.user_query_times:
+            return self.max_queries_per_minute
+
+        recent_queries = [
+            timestamp for timestamp in self.user_query_times[user_id]
+            if current_time - timestamp < 60
+        ]
+
+        remaining = self.max_queries_per_minute - len(recent_queries)
+
+        if remaining < 0:
+            return 0
+        else:
+            return remaining
 
 
 # ============================================================================
@@ -169,8 +234,13 @@ class CostEnforcer:
 
         Also initialize user_spending dict to track per-user spending
         """
-        # TODO: implement
-        self.role_budgets = {}
+        self.role_budgets = {
+            "engineer": 100,
+            "manager": 500,
+            "hr": 200,
+            "finance": 500,
+            "executive": 1000,
+        }
         self.user_spending = {}  # {user_id: {"role": "engineer", "total": 50.0}}
 
     def add_cost(self, user_id: str, role: str, cost: float):
@@ -180,8 +250,10 @@ class CostEnforcer:
         1. If user_id not in dict, create entry with role and total=0
         2. Add cost to user's total
         """
-        # TODO: implement
-        pass
+        if user_id not in self.user_spending:
+            self.user_spending[user_id] = {"role": role, "total": 0}
+
+        self.user_spending[user_id]["total"] += cost
 
     def can_afford_query(self, user_id: str, estimated_cost: float) -> bool:
         """Check if user has budget remaining.
@@ -195,8 +267,18 @@ class CostEnforcer:
         Note: if user_id is not yet in user_spending, you have no role to look up their budget.
         One approach: add role as a parameter here, similar to add_cost().
         """
-        # TODO: implement
-        return True
+        if user_id not in self.user_spending:
+            return True
+
+        user_role = self.user_spending[user_id]["role"]
+        budget = self.role_budgets[user_role]
+        total_spent = self.user_spending[user_id]["total"]
+        remaining = budget - total_spent
+
+        if estimated_cost <= remaining:
+            return True
+        else:
+            return False
 
     def get_budget_remaining(self, user_id: str) -> float:
         """Get remaining budget for user.
@@ -205,8 +287,18 @@ class CostEnforcer:
         - budget - (user's total spending)
         - Return 0 if negative
         """
-        # TODO: implement
-        return 0.0
+        if user_id not in self.user_spending:
+            return 0.0
+
+        user_role = self.user_spending[user_id]["role"]
+        budget = self.role_budgets[user_role]
+        total_spent = self.user_spending[user_id]["total"]
+        remaining = budget - total_spent
+
+        if remaining < 0:
+            return 0.0
+        else:
+            return remaining
 
 
 # ============================================================================
